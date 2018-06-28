@@ -65,9 +65,6 @@ if __name__ == "__main__":
       " new model instance.")
 
   # Training flags.
-  flags.DEFINE_integer("num_gpu", 1,
-                       "The maximum number of GPU devices to use for training. "
-                       "Flag only applies if GPUs are installed")
   flags.DEFINE_integer("batch_size", 1024,
                        "How many examples to process per batch for training.")
   flags.DEFINE_string("label_loss", "CrossEntropyLoss",
@@ -76,15 +73,15 @@ if __name__ == "__main__":
       "regularization_penalty", 1.0,
       "How much weight to give to the regularization loss (the label loss has "
       "a weight of 1).")
-  flags.DEFINE_float("base_learning_rate", 0.01,
+  flags.DEFINE_float("base_learning_rate", 0.001,
                      "Which learning rate to start with.")
-  flags.DEFINE_float("learning_rate_decay", 0.95,
+  flags.DEFINE_float("learning_rate_decay", 0.9,
                      "Learning rate decay factor to be applied every "
                      "learning_rate_decay_examples.")
   flags.DEFINE_float("learning_rate_decay_examples", 4000000,
                      "Multiply current learning rate by learning_rate_decay "
                      "every learning_rate_decay_examples.")
-  flags.DEFINE_integer("num_epochs", 5,
+  flags.DEFINE_integer("num_epochs", 15,
                        "How many passes to make over the dataset before "
                        "halting training.")
   flags.DEFINE_integer("max_steps", None,
@@ -103,6 +100,7 @@ if __name__ == "__main__":
       "log_device_placement", False,
       "Whether to write the device on which every op will run into the "
       "logs on startup.")
+
 
 def validate_class_name(flag_value, category, modules, expected_superclass):
   """Checks that the given string matches a class of the expected type.
@@ -131,6 +129,7 @@ def validate_class_name(flag_value, category, modules, expected_superclass):
                               expected_superclass.__name__))
     return True
   raise flags.FlagsError("Unable to find %s '%s'." % (category, flag_value))
+
 
 def get_input_data_tensors(reader,
                            data_pattern,
@@ -182,6 +181,7 @@ def find_class_by_name(name, modules):
   modules = [getattr(module, name, None) for module in modules]
   return next(a for a in modules if a)
 
+
 def build_graph(reader,
                 model,
                 train_data_pattern,
@@ -223,7 +223,6 @@ def build_graph(reader,
 
   local_device_protos = device_lib.list_local_devices()
   gpus = [x.name for x in local_device_protos if x.device_type == 'GPU']
-  gpus = gpus[:FLAGS.num_gpu]
   num_gpus = len(gpus)
 
   if num_gpus > 0:
@@ -269,12 +268,12 @@ def build_graph(reader,
     # line. They have to be nested.
     with tf.device(device_string % i):
       with (tf.variable_scope(("tower"), reuse=True if i > 0 else None)):
-        with (slim.arg_scope([slim.model_variable, slim.variable], device="/cpu:0" if num_gpus!=1 else "/gpu:0")):
+        with (slim.arg_scope([slim.model_variable, slim.variable], device="/cpu:0" if num_gpus != 1 else "/gpu:0")):
           result = model.create_model(
-            tower_inputs[i],
-            num_frames=tower_num_frames[i],
-            vocab_size=reader.num_classes,
-            labels=tower_labels[i])
+              tower_inputs[i],
+              num_frames=tower_num_frames[i],
+              vocab_size=reader.num_classes,
+              labels=tower_labels[i])
           for variable in slim.get_model_variables():
             tf.summary.histogram(variable.op.name, variable)
 
@@ -313,7 +312,7 @@ def build_graph(reader,
           # Incorporate the L2 weight penalties etc.
           final_loss = regularization_penalty * reg_loss + label_loss
           gradients = optimizer.compute_gradients(final_loss,
-              colocate_gradients_with_ops=False)
+                                                  colocate_gradients_with_ops=False)
           tower_gradients.append(gradients)
   label_loss = tf.reduce_mean(tf.stack(tower_label_losses))
   tf.summary.scalar("label_loss", label_loss)
@@ -357,7 +356,7 @@ class Trainer(object):
     self.is_master = (task.type == "master" and task.index == 0)
     self.train_dir = train_dir
     self.config = tf.ConfigProto(
-        allow_soft_placement=True,log_device_placement=log_device_placement)
+        allow_soft_placement=True, log_device_placement=log_device_placement)
     self.model = model
     self.reader = reader
     self.model_exporter = model_exporter
@@ -379,37 +378,12 @@ class Trainer(object):
     if self.is_master and start_new_model:
       self.remove_training_directory(self.train_dir)
 
-    if not os.path.exists(self.train_dir):
-      os.makedirs(self.train_dir)
-
-    model_flags_dict = {
-        "model": FLAGS.model,
-        "feature_sizes": FLAGS.feature_sizes,
-        "feature_names": FLAGS.feature_names,
-        "frame_features": FLAGS.frame_features,
-        "label_loss": FLAGS.label_loss,
-    }
-    flags_json_path = os.path.join(FLAGS.train_dir, "model_flags.json")
-    if os.path.exists(flags_json_path):
-      existing_flags = json.load(open(flags_json_path))
-      if existing_flags != model_flags_dict:
-        logging.error("Model flags do not match existing file %s. Please "
-                      "delete the file, change --train_dir, or pass flag "
-                      "--start_new_model",
-                      flags_json_path)
-        logging.error("Ran model with flags: %s", str(model_flags_dict))
-        logging.error("Previously ran with flags: %s", str(existing_flags))
-        exit(1)
-    else:
-      # Write the file.
-      with open(flags_json_path, "w") as fout:
-        fout.write(json.dumps(model_flags_dict))
-
     target, device_fn = self.start_server_if_distributed()
 
     meta_filename = self.get_meta_filename(start_new_model, self.train_dir)
 
     with tf.Graph().as_default() as graph:
+
       if meta_filename:
         saver = self.recover_model(meta_filename)
 
@@ -430,7 +404,7 @@ class Trainer(object):
         init_op=init_op,
         is_chief=self.is_master,
         global_step=global_step,
-        save_model_secs=15 * 60,
+        save_model_secs=60 * 60,
         save_summaries_secs=120,
         saver=saver)
 
@@ -458,9 +432,9 @@ class Trainer(object):
             eval_time = eval_end_time - eval_start_time
 
             logging.info("training step " + str(global_step_val) + " | Loss: " + ("%.2f" % loss_val) +
-              " Examples/sec: " + ("%.2f" % examples_per_second) + " | Hit@1: " +
-              ("%.2f" % hit_at_one) + " PERR: " + ("%.2f" % perr) +
-              " GAP: " + ("%.2f" % gap))
+                         " Examples/sec: " + ("%.2f" % examples_per_second) + " | Hit@1: " +
+                         ("%.2f" % hit_at_one) + " PERR: " + ("%.2f" % perr) +
+                         " GAP: " + ("%.2f" % gap))
 
             sv.summary_writer.add_summary(
                 utils.MakeSummary("model/Training_Hit@1", hit_at_one),
@@ -476,15 +450,15 @@ class Trainer(object):
 
             # Exporting the model every x steps
             time_to_export = ((self.last_model_export_step == 0) or
-                (global_step_val - self.last_model_export_step
-                 >= self.export_model_steps))
+                              (global_step_val - self.last_model_export_step
+                               >= self.export_model_steps))
 
             if self.is_master and time_to_export:
               self.export_model(global_step_val, sv.saver, sv.save_path, sess)
               self.last_model_export_step = global_step_val
           else:
             logging.info("training step " + str(global_step_val) + " | Loss: " +
-              ("%.2f" % loss_val) + " Examples/sec: " + ("%.2f" % examples_per_second))
+                         ("%.2f" % loss_val) + " Examples/sec: " + ("%.2f" % examples_per_second))
       except tf.errors.OutOfRangeError:
         logging.info("%s: Done training -- epoch limit reached.",
                      task_as_string(self.task))
@@ -554,7 +528,7 @@ class Trainer(object):
     meta_filename = latest_checkpoint + ".meta"
     if not gfile.Exists(meta_filename):
       logging.info("%s: No meta graph file found. Building a new model.",
-                     task_as_string(self.task))
+                   task_as_string(self.task))
       return None
     else:
       return meta_filename
@@ -571,20 +545,20 @@ class Trainer(object):
     optimizer_class = find_class_by_name(FLAGS.optimizer, [tf.train])
 
     build_graph(reader=reader,
-                 model=model,
-                 optimizer_class=optimizer_class,
-                 clip_gradient_norm=FLAGS.clip_gradient_norm,
-                 train_data_pattern=FLAGS.train_data_pattern,
-                 label_loss_fn=label_loss_fn,
-                 base_learning_rate=FLAGS.base_learning_rate,
-                 learning_rate_decay=FLAGS.learning_rate_decay,
-                 learning_rate_decay_examples=FLAGS.learning_rate_decay_examples,
-                 regularization_penalty=FLAGS.regularization_penalty,
-                 num_readers=FLAGS.num_readers,
-                 batch_size=FLAGS.batch_size,
-                 num_epochs=FLAGS.num_epochs)
+                model=model,
+                optimizer_class=optimizer_class,
+                clip_gradient_norm=FLAGS.clip_gradient_norm,
+                train_data_pattern=FLAGS.train_data_pattern,
+                label_loss_fn=label_loss_fn,
+                base_learning_rate=FLAGS.base_learning_rate,
+                learning_rate_decay=FLAGS.learning_rate_decay,
+                learning_rate_decay_examples=FLAGS.learning_rate_decay_examples,
+                regularization_penalty=FLAGS.regularization_penalty,
+                num_readers=FLAGS.num_readers,
+                batch_size=FLAGS.batch_size,
+                num_epochs=FLAGS.num_epochs)
 
-    return tf.train.Saver(max_to_keep=0, keep_checkpoint_every_n_hours=0.25)
+    return tf.train.Saver(max_to_keep=10, keep_checkpoint_every_n_hours=1.0)
 
 
 def get_reader():
@@ -649,8 +623,10 @@ def start_server(cluster, task):
       job_name=task.type,
       task_index=task.index)
 
+
 def task_as_string(task):
   return "/job:%s/task:%s" % (task.type, task.index)
+
 
 def main(unused_argv):
   # Load the environment.
@@ -672,7 +648,7 @@ def main(unused_argv):
   # Dispatch to a master, a worker, or a parameter server.
   if not cluster or task.type == "master" or task.type == "worker":
     model = find_class_by_name(FLAGS.model,
-        [frame_level_models, video_level_models])()
+                               [frame_level_models, video_level_models])()
 
     reader = get_reader()
 
@@ -690,6 +666,7 @@ def main(unused_argv):
   else:
     raise ValueError("%s: Invalid task_type: %s." %
                      (task_as_string(task), task.type))
+
 
 if __name__ == "__main__":
   app.run()
