@@ -65,6 +65,9 @@ if __name__ == "__main__":
       " new model instance.")
 
   # Training flags.
+  flags.DEFINE_integer("num_gpu", 1,
+                       "The maximum number of GPU devices to use for training. "
+                       "Flag only applies if GPUs are installed")
   flags.DEFINE_integer("batch_size", 1024,
                        "How many examples to process per batch for training.")
   flags.DEFINE_string("label_loss", "CrossEntropyLoss",
@@ -73,7 +76,7 @@ if __name__ == "__main__":
       "regularization_penalty", 1.0,
       "How much weight to give to the regularization loss (the label loss has "
       "a weight of 1).")
-  flags.DEFINE_float("base_learning_rate", 0.001,
+  flags.DEFINE_float("base_learning_rate", 0.0001,
                      "Which learning rate to start with.")
   flags.DEFINE_float("learning_rate_decay", 0.9,
                      "Learning rate decay factor to be applied every "
@@ -81,12 +84,12 @@ if __name__ == "__main__":
   flags.DEFINE_float("learning_rate_decay_examples", 4000000,
                      "Multiply current learning rate by learning_rate_decay "
                      "every learning_rate_decay_examples.")
-  flags.DEFINE_integer("num_epochs", 15,
+  flags.DEFINE_integer("num_epochs", 5,
                        "How many passes to make over the dataset before "
                        "halting training.")
   flags.DEFINE_integer("max_steps", None,
                        "The maximum number of iterations of the training loop.")
-  flags.DEFINE_integer("export_model_steps", 1000,
+  flags.DEFINE_integer("export_model_steps", 10000,
                        "The period, in number of steps, with which the model "
                        "is exported for batch prediction.")
 
@@ -223,6 +226,7 @@ def build_graph(reader,
 
   local_device_protos = device_lib.list_local_devices()
   gpus = [x.name for x in local_device_protos if x.device_type == 'GPU']
+  gpus = gpus[:FLAGS.num_gpu]
   num_gpus = len(gpus)
 
   if num_gpus > 0:
@@ -378,12 +382,37 @@ class Trainer(object):
     if self.is_master and start_new_model:
       self.remove_training_directory(self.train_dir)
 
+    if not os.path.exists(self.train_dir):
+      os.makedirs(self.train_dir)
+
+    model_flags_dict = {
+        "model": FLAGS.model,
+        "feature_sizes": FLAGS.feature_sizes,
+        "feature_names": FLAGS.feature_names,
+        "frame_features": FLAGS.frame_features,
+        "label_loss": FLAGS.label_loss,
+    }
+    flags_json_path = os.path.join(FLAGS.train_dir, "model_flags.json")
+    if os.path.exists(flags_json_path):
+      existing_flags = json.load(open(flags_json_path))
+      if existing_flags != model_flags_dict:
+        logging.error("Model flags do not match existing file %s. Please "
+                      "delete the file, change --train_dir, or pass flag "
+                      "--start_new_model",
+                      flags_json_path)
+        logging.error("Ran model with flags: %s", str(model_flags_dict))
+        logging.error("Previously ran with flags: %s", str(existing_flags))
+        exit(1)
+    else:
+      # Write the file.
+      with open(flags_json_path, "w") as fout:
+        fout.write(json.dumps(model_flags_dict))
+
     target, device_fn = self.start_server_if_distributed()
 
     meta_filename = self.get_meta_filename(start_new_model, self.train_dir)
 
     with tf.Graph().as_default() as graph:
-
       if meta_filename:
         saver = self.recover_model(meta_filename)
 
@@ -404,7 +433,7 @@ class Trainer(object):
         init_op=init_op,
         is_chief=self.is_master,
         global_step=global_step,
-        save_model_secs=60 * 60,
+        save_model_secs=0,
         save_summaries_secs=120,
         saver=saver)
 
