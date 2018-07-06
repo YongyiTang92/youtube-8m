@@ -1471,17 +1471,21 @@ class ConvSquare(models.BaseModel):
         input_ = model_input
         feature_size = model_input.get_shape().as_list()[2]
 
-        # for i in range(num_layers):
-        with tf.name_scope('conv1_%d' % i) as scope:
-          kernel = tf.Variable(tf.truncated_normal([temporal_field, feature_size, feature_size // 2], dtype=tf.float32,
-                                                   stddev=1e-1), name='weights')
-          conv = tf.nn.conv1d(input_, kernel, 1, padding='SAME')
-          conv = tf.sqrt(tf.square(conv))
-          biases = tf.Variable(tf.constant(0.0, shape=[feature_size // 2], dtype=tf.float32),
-                               trainable=True, name='biases')
-          bias = tf.nn.bias_add(conv, biases)
-          input_ = tf.nn.relu(bias, name=scope)
-          feature_size = feature_size // 2
+        for i in range(num_layers):
+          with tf.name_scope('conv1_%d' % i) as scope:
+            kernel = tf.get_variable("kernel",
+                            [temporal_field, feature_size, feature_size // 2],
+                            initializer = tf.random_normal_initializer(stddev=0.01))
+            conv = tf.nn.conv1d(input_, kernel, 1, padding='SAME')
+            conv = tf.sqrt(tf.square(conv))
+            # biases = tf.Variable(tf.constant(0.0, shape=[feature_size // 2], dtype=tf.float32),
+            #                      trainable=True, name='biases')
+            biases = tf.get_variable("biases",
+                            [feature_size // 2],
+                            initializer = tf.constant(0.0))
+            bias = tf.nn.bias_add(conv, biases)
+            input_ = tf.nn.relu(bias, name=scope)
+            feature_size = feature_size // 2
 
         input_ = tf.reduce_mean(input_, 1)
 
