@@ -135,6 +135,9 @@ flags.DEFINE_bool("lstm_backward", False, "BW reading for LSTM")
 
 flags.DEFINE_bool("fc_dimred", True, "Adding FC dimred after pooling")
 
+flags.DEFINE_integer("ConvLayers", 1, "Number of conv layers for ConvSquare_Moe.")
+flags.DEFINE_integer("Conv_temporal_field", 2, "Receptive field for convolution.")
+
 class LightVLAD():
     def __init__(self, feature_size,max_frames,cluster_size, add_batch_norm, is_training):
         self.feature_size = feature_size
@@ -1455,3 +1458,54 @@ class NetFVModelLF(models.BaseModel):
         vocab_size=vocab_size,
         is_training=is_training,
         **unused_params)
+
+
+class ConvSquare(BaseModel):
+    def create_model(self, model_input, vocab_size, num_frames, is_training, **unused_params):
+
+        num_layers = FLAGS.ConvLayers
+        temporal_field = FLAGS.Conv_temporal_field
+        gating = FLAGS.gating
+        add_batch_norm = FLAGS.add_batch_norm
+
+        input_ = model_input
+        feature_size = model_input.get_shape().as_list()[2]
+
+        for i in range(num_layers):
+            with tf.name_scope('conv1_%d' % i) as scope:
+                kernel = tf.Variable(tf.truncated_normal([temporal_field, feature_size, feature_size // 2], dtype=tf.float32,
+                                                         stddev=1e-1), name='weights')
+                conv = tf.nn.conv1d(input_, kernel, 1, padding='SAME')
+                conv = tf.sqrt(tf.square(conv))
+                biases = tf.Variable(tf.constant(0.0, shape=[feature_size // 2], dtype=tf.float32),
+                                     trainable=True, name='biases')
+                bias = tf.nn.bias_add(conv, biases)
+                input_ = tf.nn.relu(bias, name=scope)
+                feature_size = feature_size // 2
+
+        input_ = tf.reduce_mean(input_, 1)
+
+        if gating:
+            gating_weights = tf.get_variable("gating_weights_2",
+                                             [feature_size, feature_size],
+                                             initializer=tf.random_normal_initializer(stddev=1 / math.sqrt(feature_size)))
+
+            gates = tf.matmul(input_, gating_weights)
+            if add_batch_norm:
+                gates = slim.batch_norm(
+                    gates,
+                    center=True,
+                    scale=True,
+                    is_training=is_training,
+                    scope="gating_bn")
+
+            gates = tf.sigmoid(gates)
+
+            input_ = tf.multiply(input_, gates)
+
+        aggregated_model = getattr(video_level_models,
+                                   FLAGS.video_level_classifier_model)
+        return aggregated_model().create_model(
+            model_input=input_,
+            vocab_size=vocab_size, is_training=is_training,
+            **unused_params)
