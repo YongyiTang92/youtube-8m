@@ -18,4 +18,4 @@ python ../train.py \
 --gating=True \
 --moe_prob_gating=True \
 --graphvlad=True \
---max_step=700000\
+--max_step=700000 \
