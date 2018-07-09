@@ -11,4 +11,5 @@ python ../train.py \
 --learning_rate_decay=0.9 \
 --moe_l2=1e-6 \
 --max_step=300000 \
+--iterations=150 \
 --lstm_random_sequence=True \

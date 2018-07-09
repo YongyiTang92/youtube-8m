@@ -42,8 +42,8 @@ flags.DEFINE_bool("simplegraphvlad", False,
                   "graphical vlad")
 flags.DEFINE_bool("addvlad", False,
                   "add vlad")
-
-
+flags.DEFINE_bool("gruvlad", False,
+                  "gru vlad")
 
 flags.DEFINE_integer("iterations", 30,
                      "Number of frames per batch for DBoF.")
@@ -309,6 +309,83 @@ class AddNetVLAD():
         vlad = tf.nn.l2_normalize(vlad,1)
 
         return vlad
+
+class GRUNetVLAD():
+    def __init__(self, feature_size,max_frames,cluster_size, add_batch_norm, is_training):
+        self.feature_size = feature_size
+        self.max_frames = max_frames
+        self.is_training = is_training
+        self.add_batch_norm = add_batch_norm
+        self.cluster_size = cluster_size
+
+    def forward(self,reshaped_input):
+        gru_size = FLAGS.gru_cells
+        number_of_layers = FLAGS.gru_layers
+        random_frames = FLAGS.gru_random_sequence
+        iterations = FLAGS.iterations
+
+        cluster_weights = tf.get_variable("cluster_weights",
+              [self.feature_size, self.cluster_size],
+              initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+       
+        tf.summary.histogram("cluster_weights", cluster_weights)
+        activation = tf.matmul(reshaped_input, cluster_weights)
+        
+        if self.add_batch_norm:
+          activation = slim.batch_norm(
+              activation,
+              center=True,
+              scale=True,
+              is_training=self.is_training,
+              scope="cluster_bn")
+        else:
+          cluster_biases = tf.get_variable("cluster_biases",
+            [cluster_size],
+            initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+          tf.summary.histogram("cluster_biases", cluster_biases)
+          activation += cluster_biases
+        
+        activation = tf.nn.softmax(activation)
+        tf.summary.histogram("cluster_output", activation)
+
+        activation = tf.reshape(activation, [-1, self.max_frames, self.cluster_size])
+
+        a_sum = tf.reduce_sum(activation,-2,keep_dims=True)
+
+        cluster_weights2 = tf.get_variable("cluster_weights2",
+            [1,self.feature_size, self.cluster_size],
+            initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+        
+        a = tf.multiply(a_sum,cluster_weights2)
+        
+        activation = tf.transpose(activation,perm=[0,2,1])
+        
+        reshaped_input = tf.reshape(reshaped_input,[-1,self.max_frames,self.feature_size])
+        vlad = tf.matmul(activation,reshaped_input)
+        vlad = tf.transpose(vlad,perm=[0,2,1])
+        vlad = tf.subtract(vlad,a)
+        
+
+        vlad = tf.nn.l2_normalize(vlad,1)
+
+        # vlad = tf.reshape(vlad,[-1,self.cluster_size*self.feature_size])
+        vlad = tf.transpose(vlad,perm=[0,2,1]) # [b, c, f]
+
+        stacked_GRU = tf.contrib.rnn.MultiRNNCell(
+            [
+                tf.contrib.rnn.GRUCell(gru_size)
+                for _ in range(number_of_layers)
+                ], state_is_tuple=False)
+
+        with tf.variable_scope("RNN"):
+          outputs, state = tf.nn.dynamic_rnn(stacked_GRU, vlad,
+                                             dtype=tf.float32)
+
+        # vlad = tf.reduce_sum(vlad, 2)
+        state = tf.nn.l2_normalize(state,1)
+
+        return state
+
 
 class GraphicalNetVLAD():
     def __init__(self, feature_size,max_frames,cluster_size, add_batch_norm, is_training):
@@ -854,6 +931,7 @@ class NetVLADModelLF(models.BaseModel):
     graphvlad = FLAGS.graphvlad
     addvlad = FLAGS.addvlad
     simplegraphvlad = FLAGS.simplegraphvlad
+    gruvlad = FLAGS.gruvlad
 
     num_frames = tf.cast(tf.expand_dims(num_frames, 1), tf.float32)
     if random_frames:
@@ -883,6 +961,9 @@ class NetVLADModelLF(models.BaseModel):
     elif addvlad:
       video_NetVLAD = AddNetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = AddNetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
+    elif gruvlad:
+      video_NetVLAD = GRUNetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
+      audio_NetVLAD = GRUNetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
     else:
       video_NetVLAD = NetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = NetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
@@ -1564,7 +1645,7 @@ class ConvSquare(models.BaseModel):
           #                      trainable=True, name='biases')
           biases = tf.get_variable("biases",
                           [feature_size // 2],
-                          initializer = tf.constant(0.0))
+                          initializer = tf.constant_initializer(0.0))
           bias = tf.nn.bias_add(conv, biases)
           input_ = tf.nn.relu(bias, name=scope)
           feature_size = feature_size // 2
@@ -1700,7 +1781,7 @@ class twoStreamLstmModel(models.BaseModel):
 
 class TRN(models.BaseModel):
     def create_model(self, model_input, vocab_size, num_frames, is_training=True, **unused_params):
-
+      iterations = FLAGS.iterations
       gating = FLAGS.gating
       add_batch_norm = FLAGS.netvlad_add_batch_norm
       random_frames = FLAGS.lstm_random_sequence
@@ -1724,46 +1805,46 @@ class TRN(models.BaseModel):
       input_ = model_input
       
       with tf.name_scope('TRN_2') as scope:
-        kernel = tf.get_variable("kernel",
+        kernel = tf.get_variable("kernel_2",
                         [2, feature_size, feature_size // 2],
                         initializer = tf.random_normal_initializer(stddev=0.01))
         conv = tf.nn.conv1d(input_, kernel, 1, padding='SAME')
         conv = tf.sqrt(tf.square(conv))
         # biases = tf.Variable(tf.constant(0.0, shape=[feature_size // 2], dtype=tf.float32),
         #                      trainable=True, name='biases')
-        biases = tf.get_variable("biases",
+        biases = tf.get_variable("biases_2",
                         [feature_size // 2],
-                        initializer = tf.constant(0.0))
+                        initializer = tf.constant_initializer(0.0))
         bias = tf.nn.bias_add(conv, biases)
         TRN_2_output = tf.nn.relu(bias, name=scope)
         TRN_2_output = tf.reduce_mean(TRN_2_output, 1)
 
       with tf.name_scope('TRN_4') as scope:
-        kernel = tf.get_variable("kernel",
+        kernel = tf.get_variable("kernel_4",
                         [4, feature_size, feature_size // 2],
                         initializer = tf.random_normal_initializer(stddev=0.01))
         conv = tf.nn.conv1d(input_, kernel, 1, padding='SAME')
         conv = tf.sqrt(tf.square(conv))
         # biases = tf.Variable(tf.constant(0.0, shape=[feature_size // 2], dtype=tf.float32),
         #                      trainable=True, name='biases')
-        biases = tf.get_variable("biases",
+        biases = tf.get_variable("biases_4",
                         [feature_size // 2],
-                        initializer = tf.constant(0.0))
+                        initializer = tf.constant_initializer(0.0))
         bias = tf.nn.bias_add(conv, biases)
         TRN_4_output = tf.nn.relu(bias, name=scope)
         TRN_4_output = tf.reduce_mean(TRN_4_output, 1)
 
       with tf.name_scope('TRN_8') as scope:
-        kernel = tf.get_variable("kernel",
+        kernel = tf.get_variable("kernel_8",
                         [8, feature_size, feature_size // 2],
                         initializer = tf.random_normal_initializer(stddev=0.01))
         conv = tf.nn.conv1d(input_, kernel, 1, padding='SAME')
         conv = tf.sqrt(tf.square(conv))
         # biases = tf.Variable(tf.constant(0.0, shape=[feature_size // 2], dtype=tf.float32),
         #                      trainable=True, name='biases')
-        biases = tf.get_variable("biases",
+        biases = tf.get_variable("biases_8",
                         [feature_size // 2],
-                        initializer = tf.constant(0.0))
+                        initializer = tf.constant_initializer(0.0))
         bias = tf.nn.bias_add(conv, biases)
         TRN_8_output = tf.nn.relu(bias, name=scope)
         TRN_8_output = tf.reduce_mean(TRN_8_output, 1)
