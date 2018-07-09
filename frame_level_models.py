@@ -1876,3 +1876,80 @@ class TRN(models.BaseModel):
           model_input=avg_TRN,
           vocab_size=vocab_size, is_training=is_training,
           **unused_params)
+
+class CDCModel(models.BaseModel):
+
+  def create_model(self, model_input, vocab_size, num_frames, is_training=True, **unused_params):
+    """Creates a model which uses a stack of GRUs to represent the video.
+    Args:
+      model_input: A 'batch_size' x 'max_frames' x 'num_features' matrix of
+                   input features.
+      vocab_size: The number of classes in the dataset.
+      num_frames: A vector of length 'batch' which indicates the number of
+           frames for each video (before padding).
+    Returns:
+      A dictionary with a tensor containing the probability predictions of the
+      model in the 'predictions' key. The dimensions of the tensor are
+      'batch_size' x 'num_classes'.
+    """
+    gru_size = FLAGS.gru_cells
+    number_of_layers = FLAGS.gru_layers
+    backward = FLAGS.gru_backward
+    random_frames = FLAGS.gru_random_sequence
+    iterations = FLAGS.iterations
+    add_batch_norm = FLAGS.netvlad_add_batch_norm
+    
+    if random_frames:
+      num_frames_2 = tf.cast(tf.expand_dims(num_frames, 1), tf.float32)
+      model_input = utils.SampleRandomFrames(model_input, num_frames_2,
+                                             iterations)
+
+    max_frames = model_input.get_shape().as_list()[1]
+    feature_size = model_input.get_shape().as_list()[2]
+    if add_batch_norm:
+      reshaped_input = tf.reshape(model_input, [-1, feature_size])
+      reshaped_input = slim.batch_norm(
+          reshaped_input,
+          center=True,
+          scale=True,
+          is_training=is_training,
+          scope="input_bn")
+      model_input = tf.reshape(reshaped_input, [-1, max_frames, 1, feature_size])
+
+      conv1_output = tf.contrib.layers.conv2d(model_input, feature_size*4, [8,1], stride=[8,1], scope='conv1')
+      conv1_output = tf.contrib.layers.max_pool2d(conv1_output, [8,1], stride=[8,1], scope='pool1')
+      conv2_output = tf.contrib.layers.conv2d(conv1_output, feature_size*4, [8,1], stride=[8,1], scope='conv2')
+      conv2_output = tf.contrib.layers.max_pool2d(conv2_output, [8,1], stride=[8,1], scope='pool2')
+      deconv1_output = tf.contrib.layers.conv2d_transpose(conv2_output, feature_size*4, [8,1], stride=[8,1], scope='conv1')
+      deconv2_output = tf.contrib.layers.conv2d_transpose(deconv1_output, feature_size, [8,1], stride=[8,1], scope='conv1')
+ 
+      model_input = tf.reshape(reshaped_input, [-1, max_frames, feature_size])
+      deconv2_output = tf.reshape(deconv2_output, [-1, feature_size])
+      deconv2_output = slim.batch_norm(
+          deconv2_output,
+          center=True,
+          scale=True,
+          is_training=is_training,
+          scope="deconv_bn")
+      deconv2_output = tf.reshape(deconv2_output, [-1, max_frames, feature_size])
+      model_input = tf.concat([model_input, deconv2_output], 2)
+    
+    stacked_GRU = tf.contrib.rnn.MultiRNNCell(
+            [
+                tf.contrib.rnn.GRUCell(gru_size)
+                for _ in range(number_of_layers)
+                ], state_is_tuple=False)
+
+    loss = 0.0
+    with tf.variable_scope("RNN"):
+      outputs, state = tf.nn.dynamic_rnn(stacked_GRU, model_input,
+                                         sequence_length=num_frames,
+                                         dtype=tf.float32)
+
+    aggregated_model = getattr(video_level_models,
+                               FLAGS.video_level_classifier_model)
+    return aggregated_model().create_model(
+        model_input=state,
+        vocab_size=vocab_size,
+        is_training=is_training,
+        **unused_params)
