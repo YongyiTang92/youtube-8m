@@ -852,6 +852,7 @@ class NetVLADModelLF(models.BaseModel):
     lightvlad = FLAGS.lightvlad
     vlagd = FLAGS.vlagd
     graphvlad = FLAGS.graphvlad
+    addvlagd = FLAGS.addvlagd
     simplegraphvlad = FLAGS.simplegraphvlad
 
     num_frames = tf.cast(tf.expand_dims(num_frames, 1), tf.float32)
