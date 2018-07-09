@@ -40,6 +40,8 @@ flags.DEFINE_bool("graphvlad", False,
                   "graphical vlad")
 flags.DEFINE_bool("simplegraphvlad", False,
                   "graphical vlad")
+flags.DEFINE_bool("addvlagd", False,
+                  "add vlad")
 
 
 
@@ -247,6 +249,66 @@ class NetVLAD():
 
         return vlad
 
+class AddNetVLAD():
+    def __init__(self, feature_size,max_frames,cluster_size, add_batch_norm, is_training):
+        self.feature_size = feature_size
+        self.max_frames = max_frames
+        self.is_training = is_training
+        self.add_batch_norm = add_batch_norm
+        self.cluster_size = cluster_size
+
+    def forward(self,reshaped_input):
+
+
+        cluster_weights = tf.get_variable("cluster_weights",
+              [self.feature_size, self.cluster_size],
+              initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+       
+        tf.summary.histogram("cluster_weights", cluster_weights)
+        activation = tf.matmul(reshaped_input, cluster_weights)
+        
+        if self.add_batch_norm:
+          activation = slim.batch_norm(
+              activation,
+              center=True,
+              scale=True,
+              is_training=self.is_training,
+              scope="cluster_bn")
+        else:
+          cluster_biases = tf.get_variable("cluster_biases",
+            [cluster_size],
+            initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+          tf.summary.histogram("cluster_biases", cluster_biases)
+          activation += cluster_biases
+        
+        activation = tf.nn.softmax(activation)
+        tf.summary.histogram("cluster_output", activation)
+
+        activation = tf.reshape(activation, [-1, self.max_frames, self.cluster_size])
+
+        a_sum = tf.reduce_sum(activation,-2,keep_dims=True)
+
+        cluster_weights2 = tf.get_variable("cluster_weights2",
+            [1,self.feature_size, self.cluster_size],
+            initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+        
+        a = tf.multiply(a_sum,cluster_weights2)
+        
+        activation = tf.transpose(activation,perm=[0,2,1])
+        
+        reshaped_input = tf.reshape(reshaped_input,[-1,self.max_frames,self.feature_size])
+        vlad = tf.matmul(activation,reshaped_input)
+        vlad = tf.transpose(vlad,perm=[0,2,1])
+        vlad = tf.subtract(vlad,a)
+        
+
+        vlad = tf.nn.l2_normalize(vlad,1)
+
+        # vlad = tf.reshape(vlad,[-1,self.cluster_size*self.feature_size])
+        vlad = tf.reduce_sum(vlad, 2)
+        vlad = tf.nn.l2_normalize(vlad,1)
+
+        return vlad
 
 class GraphicalNetVLAD():
     def __init__(self, feature_size,max_frames,cluster_size, add_batch_norm, is_training):
@@ -817,6 +879,9 @@ class NetVLADModelLF(models.BaseModel):
     elif simplegraphvlad:
       video_NetVLAD = GraphicalNetVLAD_simple(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = GraphicalNetVLAD_simple(128,max_frames,cluster_size/2, add_batch_norm, is_training)
+    elif addvlagd:
+      video_NetVLAD = AddNetVLAGD(1024,max_frames,cluster_size, add_batch_norm, is_training)
+      audio_NetVLAD = AddNetVLAGD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
     else:
       video_NetVLAD = NetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = NetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
