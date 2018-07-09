@@ -1557,14 +1557,16 @@ class twoStreamLstmModel(models.BaseModel):
       [audio_dim, lstm_size//2],
       initializer=tf.random_normal_initializer(stddev=1 / math.sqrt(audio_dim)))
 
-      num_frames = video_input.get_shape().as_list()[1]
+      max_num_frames = video_input.get_shape().as_list()[1]
       video_input = tf.reshape(video_input, [-1, video_dim])
-      video_input = tf.matmul(video_input, video_embedding_weights)
-      video_input = tf.reshape(video_input, [-1, num_frames, lstm_size//2])
+      # video_input = tf.matmul(video_input, video_embedding_weights)
+      video_input = slim.fully_connected(video_input, lstm_size//2, activation_fn=tf.tanh, scope='video_embedding')
+      video_input = tf.reshape(video_input, [-1, max_num_frames, lstm_size//2])
 
       audio_input = tf.reshape(audio_input, [-1, audio_dim])
-      audio_input = tf.matmul(audio_input, audio_embedding_weights)
-      audio_input = tf.reshape(audio_input, [-1, num_frames, lstm_size//2])
+      # audio_input = tf.matmul(audio_input, audio_embedding_weights)
+      audio_input = slim.fully_connected(audio_input, lstm_size//2, activation_fn=tf.tanh, scope='audio_embedding')
+      audio_input = tf.reshape(audio_input, [-1, max_num_frames, lstm_size//2])
 
 
       # if backward:
@@ -1603,14 +1605,16 @@ class twoStreamLstmModel(models.BaseModel):
       initializer=tf.random_normal_initializer(stddev=1 / math.sqrt(lstm_size*2)))
 
       v_outputs_reshape = tf.reshape(v_outputs, [-1, lstm_size*2])
-      video_attention = tf.nn.softmax(tf.matmul(v_outputs_reshape, video_att_weights))
-      video_attention = tf.reshape(video_attention, [-1, num_frames, 1])
+      video_attention = tf.matmul(v_outputs_reshape, video_att_weights)
+      video_attention = tf.reshape(video_attention, [-1, max_num_frames, 1])
+      video_attention = tf.nn.softmax(video_attention, dim=1)
       v_outputs = tf.multiply(v_outputs, video_attention)
       v_outputs = tf.reduce_sum(v_outputs, 1)
 
       a_outputs_reshape = tf.reshape(a_outputs, [-1, lstm_size*2])
-      audio_attention = tf.nn.softmax(tf.matmul(a_outputs_reshape, audio_att_weights))
-      audio_attention = tf.reshape(audio_attention, [-1, num_frames, 1])
+      audio_attention = tf.matmul(a_outputs_reshape, audio_att_weights)
+      audio_attention = tf.reshape(audio_attention, [-1, max_num_frames, 1])
+      audio_attention = tf.nn.softmax(audio_attention, dim=1)
       a_outputs = tf.multiply(a_outputs, audio_attention)
       a_outputs = tf.reduce_sum(a_outputs, 1)
 
