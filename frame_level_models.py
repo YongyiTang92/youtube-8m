@@ -1626,12 +1626,12 @@ class twoStreamLstmModel(models.BaseModel):
       max_num_frames = video_input.get_shape().as_list()[1]
       video_input = tf.reshape(video_input, [-1, video_dim])
       # video_input = tf.matmul(video_input, video_embedding_weights)
-      video_input = slim.fully_connected(video_input, lstm_size//2, activation_fn=tf.tanh, scope='video_embedding')
+      video_input = slim.fully_connected(video_input, lstm_size//2, activation_fn=tf.tanh, scope='video_embedding', weights_regularizer=slim.l2_regularizer(8e-4))
       video_input = tf.reshape(video_input, [-1, max_num_frames, lstm_size//2])
 
       audio_input = tf.reshape(audio_input, [-1, audio_dim])
       # audio_input = tf.matmul(audio_input, audio_embedding_weights)
-      audio_input = slim.fully_connected(audio_input, lstm_size//2, activation_fn=tf.tanh, scope='audio_embedding')
+      audio_input = slim.fully_connected(audio_input, lstm_size//2, activation_fn=tf.tanh, scope='audio_embedding', weights_regularizer=slim.l2_regularizer(8e-4))
       audio_input = tf.reshape(audio_input, [-1, max_num_frames, lstm_size//2])
 
 
@@ -1695,4 +1695,103 @@ class twoStreamLstmModel(models.BaseModel):
           model_input=lstm_out_hidden,
           vocab_size=vocab_size,
           is_training=is_training,
+          **unused_params)
+
+
+class TRN(models.BaseModel):
+    def create_model(self, model_input, vocab_size, num_frames, is_training=True, **unused_params):
+
+      gating = FLAGS.gating
+      add_batch_norm = FLAGS.netvlad_add_batch_norm
+      random_frames = FLAGS.lstm_random_sequence
+
+      if random_frames:
+        num_frames_2 = tf.cast(tf.expand_dims(num_frames, 1), tf.float32)
+        model_input = utils.SampleRandomFrames(model_input, num_frames_2,
+                                             iterations)
+
+      max_frames = model_input.get_shape().as_list()[1]
+      feature_size = model_input.get_shape().as_list()[2]
+      reshaped_input = tf.reshape(model_input, [-1, feature_size])
+      if add_batch_norm:
+        reshaped_input = slim.batch_norm(
+            reshaped_input,
+            center=True,
+            scale=True,
+            is_training=is_training,
+            scope="input_bn")
+      model_input = tf.reshape(reshaped_input, [-1, max_frames, feature_size])
+      input_ = model_input
+      
+      with tf.name_scope('TRN_2') as scope:
+        kernel = tf.get_variable("kernel",
+                        [2, feature_size, feature_size // 2],
+                        initializer = tf.random_normal_initializer(stddev=0.01))
+        conv = tf.nn.conv1d(input_, kernel, 1, padding='SAME')
+        conv = tf.sqrt(tf.square(conv))
+        # biases = tf.Variable(tf.constant(0.0, shape=[feature_size // 2], dtype=tf.float32),
+        #                      trainable=True, name='biases')
+        biases = tf.get_variable("biases",
+                        [feature_size // 2],
+                        initializer = tf.constant(0.0))
+        bias = tf.nn.bias_add(conv, biases)
+        TRN_2_output = tf.nn.relu(bias, name=scope)
+        TRN_2_output = tf.reduce_mean(TRN_2_output, 1)
+
+      with tf.name_scope('TRN_4') as scope:
+        kernel = tf.get_variable("kernel",
+                        [4, feature_size, feature_size // 2],
+                        initializer = tf.random_normal_initializer(stddev=0.01))
+        conv = tf.nn.conv1d(input_, kernel, 1, padding='SAME')
+        conv = tf.sqrt(tf.square(conv))
+        # biases = tf.Variable(tf.constant(0.0, shape=[feature_size // 2], dtype=tf.float32),
+        #                      trainable=True, name='biases')
+        biases = tf.get_variable("biases",
+                        [feature_size // 2],
+                        initializer = tf.constant(0.0))
+        bias = tf.nn.bias_add(conv, biases)
+        TRN_4_output = tf.nn.relu(bias, name=scope)
+        TRN_4_output = tf.reduce_mean(TRN_4_output, 1)
+
+      with tf.name_scope('TRN_8') as scope:
+        kernel = tf.get_variable("kernel",
+                        [8, feature_size, feature_size // 2],
+                        initializer = tf.random_normal_initializer(stddev=0.01))
+        conv = tf.nn.conv1d(input_, kernel, 1, padding='SAME')
+        conv = tf.sqrt(tf.square(conv))
+        # biases = tf.Variable(tf.constant(0.0, shape=[feature_size // 2], dtype=tf.float32),
+        #                      trainable=True, name='biases')
+        biases = tf.get_variable("biases",
+                        [feature_size // 2],
+                        initializer = tf.constant(0.0))
+        bias = tf.nn.bias_add(conv, biases)
+        TRN_8_output = tf.nn.relu(bias, name=scope)
+        TRN_8_output = tf.reduce_mean(TRN_8_output, 1)
+
+      avg_TRN = TRN_2_output + TRN_4_output + TRN_8_output
+      avg_TRN = avg_TRN / 3.0
+
+      if gating:
+        gating_weights = tf.get_variable("gating_weights_2",
+                                         [feature_size, feature_size],
+                                         initializer=tf.random_normal_initializer(stddev=1 / math.sqrt(feature_size)))
+
+        gates = tf.matmul(avg_TRN, gating_weights)
+        if add_batch_norm:
+          gates = slim.batch_norm(
+              gates,
+              center=True,
+              scale=True,
+              is_training=is_training,
+              scope="gating_bn")
+
+        gates = tf.sigmoid(gates)
+
+        avg_TRN = tf.multiply(avg_TRN, gates)
+
+      aggregated_model = getattr(video_level_models,
+                                 FLAGS.video_level_classifier_model)
+      return aggregated_model().create_model(
+          model_input=avg_TRN,
+          vocab_size=vocab_size, is_training=is_training,
           **unused_params)
