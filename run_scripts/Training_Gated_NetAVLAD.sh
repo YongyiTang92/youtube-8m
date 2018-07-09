@@ -17,5 +17,5 @@ python ../train.py \
 --netvlad_relu=False \
 --gating=True \
 --moe_prob_gating=True \
---addvlagd=True \
+--addvlad=True \
 --max_step=700000\

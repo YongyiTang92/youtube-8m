@@ -40,7 +40,7 @@ flags.DEFINE_bool("graphvlad", False,
                   "graphical vlad")
 flags.DEFINE_bool("simplegraphvlad", False,
                   "graphical vlad")
-flags.DEFINE_bool("addvlagd", False,
+flags.DEFINE_bool("addvlad", False,
                   "add vlad")
 
 
@@ -852,7 +852,7 @@ class NetVLADModelLF(models.BaseModel):
     lightvlad = FLAGS.lightvlad
     vlagd = FLAGS.vlagd
     graphvlad = FLAGS.graphvlad
-    addvlagd = FLAGS.addvlagd
+    addvlad = FLAGS.addvlad
     simplegraphvlad = FLAGS.simplegraphvlad
 
     num_frames = tf.cast(tf.expand_dims(num_frames, 1), tf.float32)
@@ -880,9 +880,9 @@ class NetVLADModelLF(models.BaseModel):
     elif simplegraphvlad:
       video_NetVLAD = GraphicalNetVLAD_simple(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = GraphicalNetVLAD_simple(128,max_frames,cluster_size/2, add_batch_norm, is_training)
-    elif addvlagd:
-      video_NetVLAD = AddNetVLAGD(1024,max_frames,cluster_size, add_batch_norm, is_training)
-      audio_NetVLAD = AddNetVLAGD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
+    elif addvlad:
+      video_NetVLAD = AddNetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
+      audio_NetVLAD = AddNetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
     else:
       video_NetVLAD = NetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = NetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
