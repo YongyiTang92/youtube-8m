@@ -238,7 +238,7 @@ class LocalLightVLAD():
         #       initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
         vlad = tf.reshape(vlad,[-1,self.feature_size])
         vlad = slim.fully_connected(vlad, self.cluster_size, scope='local_connection')
-        vlad = tf.reshape(vlad,[-1,self.cluster_size])
+        vlad = tf.reshape(vlad,[-1,self.cluster_size, self.cluster_size])
 
         vlad = tf.transpose(vlad,perm=[0,2,1])
         vlad = tf.nn.l2_normalize(vlad,1)
