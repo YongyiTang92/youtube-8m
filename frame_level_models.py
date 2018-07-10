@@ -44,6 +44,8 @@ flags.DEFINE_bool("addvlad", False,
                   "add vlad")
 flags.DEFINE_bool("gruvlad", False,
                   "gru vlad")
+flags.DEFINE_bool("acvlad", False,
+                  "ac vlad")
 
 flags.DEFINE_integer("iterations", 30,
                      "Number of frames per batch for DBoF.")
@@ -188,6 +190,59 @@ class LightVLAD():
 
         return vlad
 
+class AC_VLAD():
+    def __init__(self, feature_size,max_frames,cluster_size, add_batch_norm, is_training):
+        self.feature_size = feature_size
+        self.max_frames = max_frames
+        self.is_training = is_training
+        self.add_batch_norm = add_batch_norm
+        self.cluster_size = cluster_size
+
+    def forward(self,reshaped_input):
+
+
+        cluster_weights = tf.get_variable("cluster_weights",
+              [self.feature_size, self.cluster_size],
+              initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+       
+        activation = tf.matmul(reshaped_input, cluster_weights)
+        
+        if self.add_batch_norm:
+          activation = slim.batch_norm(
+              activation,
+              center=True,
+              scale=True,
+              is_training=self.is_training,
+              scope="cluster_bn")
+        else:
+          cluster_biases = tf.get_variable("cluster_biases",
+            [cluster_size],
+            initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+          tf.summary.histogram("cluster_biases", cluster_biases)
+          activation += cluster_biases
+        
+        activation = tf.nn.softmax(activation)
+
+        activation = tf.reshape(activation, [-1, self.max_frames, self.cluster_size])
+       
+        activation = tf.transpose(activation,perm=[0,2,1])
+        
+        reshaped_input = tf.reshape(reshaped_input,[-1,self.max_frames,self.feature_size])
+        vlad = tf.matmul(activation,reshaped_input)
+        
+        c_vlad = tf.matmul(vlad, tf.transpose(vlad,perm=[0,2,1]))
+        c_vlad = tf.transpose(c_vlad,perm=[0,2,1])
+        c_vlad = tf.nn.l2_normalize(c_vlad,1)
+
+        vlad = tf.transpose(vlad,perm=[0,2,1])
+        vlad = tf.nn.l2_normalize(vlad,1)
+
+        vlad = tf.reshape(vlad,[-1,self.cluster_size*self.feature_size])
+        c_vlad = tf.reshape(c_vlad, [-1, self.cluster_size*self.cluster_size])
+        vlad = tf.concat([vlad, c_vlad], -1)
+        vlad = tf.nn.l2_normalize(vlad,1)
+
+        return vlad
 
 class NetVLAD():
     def __init__(self, feature_size,max_frames,cluster_size, add_batch_norm, is_training):
@@ -458,7 +513,6 @@ class GraphicalNetVLAD():
         vlad = tf.reshape(vlad, [-1, self.cluster_size, self.feature_size])
         vlad = tf.transpose(vlad,perm=[0,2,1])
         vlad = tf.nn.l2_normalize(vlad,1)
-
 
         vlad = tf.reshape(vlad,[-1,self.cluster_size*self.feature_size])
         vlad = tf.nn.l2_normalize(vlad,1)
@@ -932,6 +986,7 @@ class NetVLADModelLF(models.BaseModel):
     addvlad = FLAGS.addvlad
     simplegraphvlad = FLAGS.simplegraphvlad
     gruvlad = FLAGS.gruvlad
+    acvlad = FLAGS.acvlad
 
     num_frames = tf.cast(tf.expand_dims(num_frames, 1), tf.float32)
     if random_frames:
@@ -964,6 +1019,9 @@ class NetVLADModelLF(models.BaseModel):
     elif gruvlad:
       video_NetVLAD = GRUNetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = GRUNetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
+    elif acvlad:
+      video_NetVLAD = AC_VLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
+      audio_NetVLAD = AC_VLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
     else:
       video_NetVLAD = NetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = NetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
@@ -1916,12 +1974,12 @@ class CDCModel(models.BaseModel):
           scope="input_bn")
       model_input = tf.reshape(reshaped_input, [-1, max_frames, 1, feature_size])
 
-      conv1_output = tf.contrib.layers.conv2d(model_input, feature_size*4, [8,1], stride=[8,1], scope='conv1')
+      conv1_output = tf.contrib.layers.conv2d(model_input, feature_size*4, [8,1], stride=[1,1], scope='conv1')
       conv1_output = tf.contrib.layers.max_pool2d(conv1_output, [8,1], stride=[8,1], scope='pool1')
-      conv2_output = tf.contrib.layers.conv2d(conv1_output, feature_size*4, [8,1], stride=[8,1], scope='conv2')
+      conv2_output = tf.contrib.layers.conv2d(conv1_output, feature_size*4, [8,1], stride=[1,1], scope='conv2')
       conv2_output = tf.contrib.layers.max_pool2d(conv2_output, [8,1], stride=[8,1], scope='pool2')
-      deconv1_output = tf.contrib.layers.conv2d_transpose(conv2_output, feature_size*4, [8,1], stride=[8,1], scope='conv1')
-      deconv2_output = tf.contrib.layers.conv2d_transpose(deconv1_output, feature_size, [8,1], stride=[8,1], scope='conv1')
+      deconv1_output = tf.contrib.layers.conv2d_transpose(conv2_output, feature_size*4, [8,1], stride=[8,1], scope='conv1_trans')
+      deconv2_output = tf.contrib.layers.conv2d_transpose(deconv1_output, feature_size, [8,1], stride=[8,1], scope='conv2_trans')
  
       model_input = tf.reshape(reshaped_input, [-1, max_frames, feature_size])
       deconv2_output = tf.reshape(deconv2_output, [-1, feature_size])
