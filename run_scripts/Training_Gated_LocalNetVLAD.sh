@@ -3,7 +3,7 @@ python ../train.py \
 --train_data_pattern='/mnt/ceph_cv/aicv_image_data/forestlma/Youtube8M_2018/frame/*.tfrecord' \
 --model=NetVLADModelLF \
 --video_level_classifier_model=willow_MoeModel \
---train_dir=acgatednetvladLF-256k-1024-80-0002-300iter-norelu-basic-gatedmoe \
+--train_dir=localgatednetvladLF-256k-1024-80-0002-300iter-norelu-basic-gatedmoe \
 --frame_features=True \
 --feature_names="rgb,audio" \
 --feature_sizes="1024,128" \
@@ -17,5 +17,5 @@ python ../train.py \
 --netvlad_relu=False \
 --gating=True \
 --moe_prob_gating=True \
---acvlad=True \
+--localvlad=True \
 --max_step=700000 \

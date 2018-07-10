@@ -46,6 +46,8 @@ flags.DEFINE_bool("gruvlad", False,
                   "gru vlad")
 flags.DEFINE_bool("acvlad", False,
                   "ac vlad")
+flags.DEFINE_bool("localvlad", False,
+                  "local vlad")
 
 flags.DEFINE_integer("iterations", 30,
                      "Number of frames per batch for DBoF.")
@@ -186,6 +188,62 @@ class LightVLAD():
         vlad = tf.nn.l2_normalize(vlad,1)
 
         vlad = tf.reshape(vlad,[-1,self.cluster_size*self.feature_size])
+        vlad = tf.nn.l2_normalize(vlad,1)
+
+        return vlad
+
+class LocalLightVLAD():
+    def __init__(self, feature_size,max_frames,cluster_size, add_batch_norm, is_training):
+        self.feature_size = feature_size
+        self.max_frames = max_frames
+        self.is_training = is_training
+        self.add_batch_norm = add_batch_norm
+        self.cluster_size = cluster_size
+
+    def forward(self,reshaped_input):
+
+
+        cluster_weights = tf.get_variable("cluster_weights",
+              [self.feature_size, self.cluster_size],
+              initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+       
+        activation = tf.matmul(reshaped_input, cluster_weights)
+        
+        if self.add_batch_norm:
+          activation = slim.batch_norm(
+              activation,
+              center=True,
+              scale=True,
+              is_training=self.is_training,
+              scope="cluster_bn")
+        else:
+          cluster_biases = tf.get_variable("cluster_biases",
+            [cluster_size],
+            initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+          tf.summary.histogram("cluster_biases", cluster_biases)
+          activation += cluster_biases
+        
+        activation = tf.nn.softmax(activation)
+
+        activation = tf.reshape(activation, [-1, self.max_frames, self.cluster_size])
+       
+        activation = tf.transpose(activation,perm=[0,2,1])
+        
+        reshaped_input = tf.reshape(reshaped_input,[-1,self.max_frames,self.feature_size])
+        vlad = tf.matmul(activation,reshaped_input)
+
+        vlad = tf.nn.l2_normalize(vlad,2)
+        # local_weights = tf.get_variable("local_weights",
+        #       [self.feature_size, self.cluster_size],
+        #       initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+        vlad = tf.reshape(vlad,[-1,self.feature_size])
+        vlad = slim.fully_connected(vlad, self.cluster_size, scope='local_connection')
+        vlad = tf.reshape(vlad,[-1,self.cluster_size])
+
+        vlad = tf.transpose(vlad,perm=[0,2,1])
+        vlad = tf.nn.l2_normalize(vlad,1)
+
+        vlad = tf.reshape(vlad,[-1,self.cluster_size*self.cluster_size])
         vlad = tf.nn.l2_normalize(vlad,1)
 
         return vlad
@@ -987,6 +1045,7 @@ class NetVLADModelLF(models.BaseModel):
     simplegraphvlad = FLAGS.simplegraphvlad
     gruvlad = FLAGS.gruvlad
     acvlad = FLAGS.acvlad
+    localvlad = FLAGS.localvlad
 
     num_frames = tf.cast(tf.expand_dims(num_frames, 1), tf.float32)
     if random_frames:
@@ -1022,6 +1081,9 @@ class NetVLADModelLF(models.BaseModel):
     elif acvlad:
       video_NetVLAD = AC_VLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = AC_VLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
+    elif localvlad:
+      video_NetVLAD = LocalLightVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
+      audio_NetVLAD = LocalLightVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
     else:
       video_NetVLAD = NetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = NetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
