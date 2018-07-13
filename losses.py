@@ -15,6 +15,11 @@
 """Provides definitions for non-regularized training or test losses."""
 
 import tensorflow as tf
+from tensorflow import flags
+FLAGS = flags.FLAGS
+
+flags.DEFINE_float("focal_lumbda", 2.0,
+                   "focal_lumbda")
 
 
 class BaseLoss(object):
@@ -47,6 +52,20 @@ class CrossEntropyLoss(BaseLoss):
       float_labels = tf.cast(labels, tf.float32)
       cross_entropy_loss = float_labels * tf.log(predictions + epsilon) + (
           1 - float_labels) * tf.log(1 - predictions + epsilon)
+      cross_entropy_loss = tf.negative(cross_entropy_loss)
+      return tf.reduce_mean(tf.reduce_sum(cross_entropy_loss, 1))
+
+
+class Focal_CrossEntropyLoss(BaseLoss):
+  """Calculate the cross entropy loss between the predictions and labels.
+  """
+
+  def calculate_loss(self, predictions, labels, **unused_params):
+    with tf.name_scope("loss_xent"):
+      epsilon = 10e-6
+      float_labels = tf.cast(labels, tf.float32)
+      cross_entropy_loss = float_labels * ((1 - predictions + epsilon) ** FLAGS.focal_lumbda) * tf.log(predictions + epsilon) + (
+          1 - float_labels) * ((predictions + epsilon) ** FLAGS.focal_lumbda) * tf.log(1 - predictions + epsilon)
       cross_entropy_loss = tf.negative(cross_entropy_loss)
       return tf.reduce_mean(tf.reduce_sum(cross_entropy_loss, 1))
 
