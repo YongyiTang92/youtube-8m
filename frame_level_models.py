@@ -603,6 +603,7 @@ class NetVLAD_NonLocal():
         if FLAGS.afterNorm:
           vlad = tf.nn.l2_normalize(vlad,1) # [b,f,c]
         vlad = tf.transpose(vlad,perm=[0,2,1])
+        vlad = tf.reshape(vlad, [-1, self.feature_size])
 
         nonlocal_theta = tf.get_variable("nonlocal_theta",
               [self.feature_size, self.cluster_size],
@@ -623,6 +624,7 @@ class NetVLAD_NonLocal():
         vlad_g = tf.matmul(vlad, nonlocal_g)
         vlad_g = tf.matmul(vlad_g, nonlocal_out)
         vlad = vlad + vlad_g
+        vlad = tf.reshape(vlad, [-1, self.cluster_size, self.feature_size])
 
         vlad = tf.transpose(vlad,perm=[0,2,1])
         if FLAGS.beforeNorm:
@@ -1381,6 +1383,7 @@ class NetVLADModelLF(models.BaseModel):
     convglulightvlad = FLAGS.convglulightvlad
     sqrtvlad = FLAGS.sqrtvlad
     nonlocalvlad = FLAGS.nonlocalvlad
+    bilinear = FLAGS.bilinear
 
     num_frames = tf.cast(tf.expand_dims(num_frames, 1), tf.float32)
     if random_frames:
