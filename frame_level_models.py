@@ -620,11 +620,20 @@ class NetVLAD_NonLocal():
 
         vlad_theta = tf.matmul(vlad, nonlocal_theta)
         vlad_phi = tf.matmul(vlad, nonlocal_phi)
-        vlad_softmax = tf.nn.softmax(self.feature_size**-.5 * tf.matmul(vlad_theta, tf.transpose(vlad_phi,perm=[0,2,1])))
         vlad_g = tf.matmul(vlad, nonlocal_g)
+
+        vlad_theta = tf.reshape(vlad_theta, [-1, self.cluster_size, self.cluster_size])
+        vlad_phi = tf.reshape(vlad_phi, [-1, self.cluster_size, self.cluster_size])
+        vlad_g = tf.reshape(vlad_phi, [-1, self.cluster_size, self.cluster_size])
+
+        vlad_softmax = tf.nn.softmax(self.feature_size**-.5 * tf.matmul(vlad_theta, tf.transpose(vlad_phi,perm=[0,2,1])))
+        vlad_g = tf.matmul(vlad_softmax, vlad_g)
+        vlad_g = tf.reshape(vlad_g, [-1, self.cluster_size])
+
         vlad_g = tf.matmul(vlad_g, nonlocal_out)
-        vlad = vlad + vlad_g
+        vlad_g = tf.reshape(vlad_g, [-1, self.cluster_size, self.feature_size])
         vlad = tf.reshape(vlad, [-1, self.cluster_size, self.feature_size])
+        vlad = vlad + vlad_g
 
         vlad = tf.transpose(vlad,perm=[0,2,1])
         if FLAGS.beforeNorm:
