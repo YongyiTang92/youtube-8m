@@ -1,6 +1,6 @@
 export CUDA_VISIBLE_DEVICES='0'
 python ../train.py \
---train_data_pattern='hdfs://100.110.18.133:9000/user/VideoAI/rextang/yt8m_2018/frame/*.tfrecord' \
+--train_data_pattern='/mnt/ceph_cv/aicv_image_data/forestlma/Youtube8M_2018/frame/*.tfrecord' \
 --model=NetVLADModelLF \
 --video_level_classifier_model=willow_MoeModel \
 --train_dir=sqrtgatednetvladLF-128k-1024-80-0002-300iter-norelu-basic-gatedmoe \
