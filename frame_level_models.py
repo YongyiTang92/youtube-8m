@@ -158,6 +158,8 @@ flags.DEFINE_bool("fc_dimred", True, "Adding FC dimred after pooling")
 
 flags.DEFINE_integer("ConvLayers", 1, "Number of conv layers for ConvSquare_Moe.")
 flags.DEFINE_integer("Conv_temporal_field", 2, "Receptive field for convolution.")
+flags.DEFINE_bool("avg_netvlad", False, "use avgpooling for reducing vladnet feature size")
+flags.DEFINE_bool("max_netvlad", False, "use maxpooling for reducing vladnet feature size")
 
 class LightVLAD():
     def __init__(self, feature_size,max_frames,cluster_size, add_batch_norm, is_training):
@@ -639,7 +641,12 @@ class NetVLAD_NonLocal():
         if FLAGS.beforeNorm:
           vlad = tf.nn.l2_normalize(vlad,1) # [b,f,c]
 
-        vlad = tf.reshape(vlad,[-1,self.cluster_size*self.feature_size])
+        if FLAGS.avg_netvlad:
+          vlad = tf.reduce_mean(vlad,2)
+        elif FLAGS.max_netvlad:
+          vlad = tf.reduce_max(vlad,2)
+        else:
+          vlad = tf.reshape(vlad,[-1,self.cluster_size*self.feature_size])
         vlad = tf.nn.l2_normalize(vlad,1)
 
         return vlad

@@ -193,6 +193,8 @@ def evaluation_loop(video_id_batch, prediction_batch, label_batch, loss,
   """
 
   global_step_val = -1
+  config = tf.ConfigProto()
+  config.gpu_options.allow_growth = True
   with tf.Session() as sess:
     latest_checkpoint = get_latest_checkpoint()
     if latest_checkpoint:

@@ -359,8 +359,10 @@ class Trainer(object):
     self.task = task
     self.is_master = (task.type == "master" and task.index == 0)
     self.train_dir = train_dir
+    # gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=0.4)
     self.config = tf.ConfigProto(
-        allow_soft_placement=True, log_device_placement=log_device_placement)
+        allow_soft_placement=True, log_device_placement=log_device_placement, gpu_options=gpu_options)
+    # self.config.gpu_options.allow_growth = True
     self.model = model
     self.reader = reader
     self.model_exporter = model_exporter
@@ -413,12 +415,13 @@ class Trainer(object):
     meta_filename = self.get_meta_filename(start_new_model, self.train_dir)
 
     with tf.Graph().as_default() as graph:
-      if meta_filename:
-        saver = self.recover_model(meta_filename)
+      # if meta_filename:
+      #   saver = self.recover_model(meta_filename)
 
-      with tf.device(device_fn):
-        if not meta_filename:
-          saver = self.build_model(self.model, self.reader)
+      # with tf.device(device_fn):
+      #   if not meta_filename:
+      #     saver = self.build_model(self.model, self.reader)
+        saver = self.build_model(self.model, self.reader)
 
         global_step = tf.get_collection("global_step")[0]
         loss = tf.get_collection("loss")[0]
