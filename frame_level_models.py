@@ -58,6 +58,10 @@ flags.DEFINE_bool("bilinear", False,
                   "bilinear pooling")
 flags.DEFINE_bool("nonlocalvlad", False,
                   "nonlocal vlad")
+flags.DEFINE_bool("nonlocalvlad_shared", False,
+                  "nonlocalvlad_shared")
+flags.DEFINE_bool("nonlocalvlad_unique", False,
+                  "nonlocalvlad_unique")
 
 flags.DEFINE_bool("beforeNorm", False,
                   "nonlocal before norm")
@@ -160,6 +164,8 @@ flags.DEFINE_integer("ConvLayers", 1, "Number of conv layers for ConvSquare_Moe.
 flags.DEFINE_integer("Conv_temporal_field", 2, "Receptive field for convolution.")
 flags.DEFINE_bool("avg_netvlad", False, "use avgpooling for reducing vladnet feature size")
 flags.DEFINE_bool("max_netvlad", False, "use maxpooling for reducing vladnet feature size")
+
+flags.DEFINE_integer("num_nonlocal_block", 1, "Number of non-local module.")
 
 class LightVLAD():
     def __init__(self, feature_size,max_frames,cluster_size, add_batch_norm, is_training):
@@ -551,6 +557,65 @@ class NetVLAD():
 
         return vlad
 
+class NetVLAD_Flexable():
+    def __init__(self, feature_size,cluster_size, add_batch_norm, is_training):
+        self.feature_size = feature_size
+        # self.max_frames = max_frames
+        self.is_training = is_training
+        self.add_batch_norm = add_batch_norm
+        self.cluster_size = cluster_size
+
+    def forward(self,reshaped_input, max_frames):
+
+
+        cluster_weights = tf.get_variable("cluster_weights",
+              [self.feature_size, self.cluster_size],
+              initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+       
+        tf.summary.histogram("cluster_weights", cluster_weights)
+        activation = tf.matmul(reshaped_input, cluster_weights)
+        
+        if self.add_batch_norm:
+          activation = slim.batch_norm(
+              activation,
+              center=True,
+              scale=True,
+              is_training=self.is_training,
+              scope="cluster_bn")
+        else:
+          cluster_biases = tf.get_variable("cluster_biases",
+            [cluster_size],
+            initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+          tf.summary.histogram("cluster_biases", cluster_biases)
+          activation += cluster_biases
+        
+        activation = tf.nn.softmax(activation)
+        tf.summary.histogram("cluster_output", activation)
+
+        activation = tf.reshape(activation, [-1, max_frames, self.cluster_size])
+
+        a_sum = tf.reduce_sum(activation,-2,keep_dims=True)
+
+        cluster_weights2 = tf.get_variable("cluster_weights2",
+            [1,self.feature_size, self.cluster_size],
+            initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+        
+        a = tf.multiply(a_sum,cluster_weights2)
+        
+        activation = tf.transpose(activation,perm=[0,2,1])
+        
+        reshaped_input = tf.reshape(reshaped_input,[-1,max_frames,self.feature_size])
+        vlad = tf.matmul(activation,reshaped_input)
+        vlad = tf.transpose(vlad,perm=[0,2,1])
+        vlad = tf.subtract(vlad,a)
+        
+
+        vlad = tf.nn.l2_normalize(vlad,1)
+        vlad = tf.reduce_mean(vlad,2)
+        vlad = tf.nn.l2_normalize(vlad,1)
+
+        return vlad
+
 class NetVLAD_NonLocal():
     def __init__(self, feature_size,max_frames,cluster_size, add_batch_norm, is_training):
         self.feature_size = feature_size
@@ -636,6 +701,158 @@ class NetVLAD_NonLocal():
         vlad_g = tf.reshape(vlad_g, [-1, self.cluster_size, self.feature_size])
         vlad = tf.reshape(vlad, [-1, self.cluster_size, self.feature_size])
         vlad = vlad + vlad_g
+
+        vlad = tf.transpose(vlad,perm=[0,2,1])
+        if FLAGS.beforeNorm:
+          vlad = tf.nn.l2_normalize(vlad,1) # [b,f,c]
+
+        if FLAGS.avg_netvlad:
+          vlad = tf.reduce_mean(vlad,2)
+        elif FLAGS.max_netvlad:
+          vlad = tf.reduce_max(vlad,2)
+        else:
+          vlad = tf.reshape(vlad,[-1,self.cluster_size*self.feature_size])
+        vlad = tf.nn.l2_normalize(vlad,1)
+
+        return vlad
+
+class NetVLAD_NonLocal_modularize_shared():
+    def __init__(self, feature_size,max_frames,cluster_size, add_batch_norm, is_training):
+        self.feature_size = feature_size
+        self.max_frames = max_frames
+        self.is_training = is_training
+        self.add_batch_norm = add_batch_norm
+        self.cluster_size = cluster_size
+
+    def forward(self,reshaped_input):
+
+        cluster_weights = tf.get_variable("cluster_weights",
+              [self.feature_size, self.cluster_size],
+              initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+       
+        tf.summary.histogram("cluster_weights", cluster_weights)
+        activation = tf.matmul(reshaped_input, cluster_weights)
+        
+        if self.add_batch_norm:
+          activation = slim.batch_norm(
+              activation,
+              center=True,
+              scale=True,
+              is_training=self.is_training,
+              scope="cluster_bn")
+        else:
+          cluster_biases = tf.get_variable("cluster_biases",
+            [cluster_size],
+            initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+          tf.summary.histogram("cluster_biases", cluster_biases)
+          activation += cluster_biases
+        
+        activation = tf.nn.softmax(activation)
+        tf.summary.histogram("cluster_output", activation)
+
+        activation = tf.reshape(activation, [-1, self.max_frames, self.cluster_size])
+
+        a_sum = tf.reduce_sum(activation,-2,keep_dims=True)
+
+        cluster_weights2 = tf.get_variable("cluster_weights2",
+            [1,self.feature_size, self.cluster_size],
+            initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+        
+        a = tf.multiply(a_sum,cluster_weights2)
+        
+        activation = tf.transpose(activation,perm=[0,2,1])
+        
+        reshaped_input = tf.reshape(reshaped_input,[-1,self.max_frames,self.feature_size])
+        vlad = tf.matmul(activation,reshaped_input)
+        vlad = tf.transpose(vlad,perm=[0,2,1])
+        vlad = tf.subtract(vlad,a)
+        
+        if FLAGS.afterNorm:
+          vlad = tf.nn.l2_normalize(vlad,1) # [b,f,c]
+        vlad = tf.transpose(vlad,perm=[0,2,1])
+        vlad = tf.reshape(vlad, [-1, self.feature_size])
+
+        for nonlocal_i in range(FLAGS.num_nonlocal_block):
+          with (tf.variable_scope(("nonlocal_layer"), reuse=True if nonlocal_i > 0 else None)):
+            vlad = nonLocal_block(vlad, feature_size=self.feature_size, hidden_size=self.cluster_size, cluster_size=self.cluster_size)
+        vlad = tf.reshape(vlad, [-1, self.cluster_size, self.feature_size])
+        
+
+        vlad = tf.transpose(vlad,perm=[0,2,1])
+        if FLAGS.beforeNorm:
+          vlad = tf.nn.l2_normalize(vlad,1) # [b,f,c]
+
+        if FLAGS.avg_netvlad:
+          vlad = tf.reduce_mean(vlad,2)
+        elif FLAGS.max_netvlad:
+          vlad = tf.reduce_max(vlad,2)
+        else:
+          vlad = tf.reshape(vlad,[-1,self.cluster_size*self.feature_size])
+        vlad = tf.nn.l2_normalize(vlad,1)
+
+        return vlad
+
+class NetVLAD_NonLocal_modularize_unique():
+    def __init__(self, feature_size,max_frames,cluster_size, add_batch_norm, is_training):
+        self.feature_size = feature_size
+        self.max_frames = max_frames
+        self.is_training = is_training
+        self.add_batch_norm = add_batch_norm
+        self.cluster_size = cluster_size
+
+    def forward(self,reshaped_input):
+
+        cluster_weights = tf.get_variable("cluster_weights",
+              [self.feature_size, self.cluster_size],
+              initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+       
+        tf.summary.histogram("cluster_weights", cluster_weights)
+        activation = tf.matmul(reshaped_input, cluster_weights)
+        
+        if self.add_batch_norm:
+          activation = slim.batch_norm(
+              activation,
+              center=True,
+              scale=True,
+              is_training=self.is_training,
+              scope="cluster_bn")
+        else:
+          cluster_biases = tf.get_variable("cluster_biases",
+            [cluster_size],
+            initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+          tf.summary.histogram("cluster_biases", cluster_biases)
+          activation += cluster_biases
+        
+        activation = tf.nn.softmax(activation)
+        tf.summary.histogram("cluster_output", activation)
+
+        activation = tf.reshape(activation, [-1, self.max_frames, self.cluster_size])
+
+        a_sum = tf.reduce_sum(activation,-2,keep_dims=True)
+
+        cluster_weights2 = tf.get_variable("cluster_weights2",
+            [1,self.feature_size, self.cluster_size],
+            initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(self.feature_size)))
+        
+        a = tf.multiply(a_sum,cluster_weights2)
+        
+        activation = tf.transpose(activation,perm=[0,2,1])
+        
+        reshaped_input = tf.reshape(reshaped_input,[-1,self.max_frames,self.feature_size])
+        vlad = tf.matmul(activation,reshaped_input)
+        vlad = tf.transpose(vlad,perm=[0,2,1])
+        vlad = tf.subtract(vlad,a)
+        
+        if FLAGS.afterNorm:
+          vlad = tf.nn.l2_normalize(vlad,1) # [b,f,c]
+        vlad = tf.transpose(vlad,perm=[0,2,1])
+        vlad = tf.reshape(vlad, [-1, self.feature_size])
+
+        for nonlocal_i in range(FLAGS.num_nonlocal_block):
+          with tf.variable_scope(("nonlocal_layer_%d") % nonlocal_i):
+            vlad = nonLocal_block(vlad, feature_size=self.feature_size, hidden_size=self.cluster_size, cluster_size=self.cluster_size)
+        vlad = tf.reshape(vlad, [-1, self.cluster_size, self.feature_size])
+        
 
         vlad = tf.transpose(vlad,perm=[0,2,1])
         if FLAGS.beforeNorm:
@@ -843,6 +1060,85 @@ class GRUNetVLAD():
           outputs, state = tf.nn.dynamic_rnn(stacked_GRU, vlad,
                                              dtype=tf.float32)
 
+        # vlad = tf.reduce_sum(vlad, 2)
+        state = tf.nn.l2_normalize(state,1)
+
+        return state
+
+class GRUthenNetVLAD():
+    def __init__(self, feature_size,max_frames,cluster_size, add_batch_norm, is_training):
+        self.feature_size = feature_size
+        self.max_frames = max_frames
+        self.is_training = is_training
+        self.add_batch_norm = add_batch_norm
+        self.cluster_size = cluster_size
+
+    def forward(self,reshaped_input):
+        gru_size = FLAGS.gru_cells
+        number_of_layers = FLAGS.gru_layers
+        random_frames = FLAGS.gru_random_sequence
+        iterations = FLAGS.iterations
+
+        reshaped_input = tf.reshape(reshaped_input, [-1, self.max_frames, self.feature_size])
+
+        stacked_GRU = tf.contrib.rnn.MultiRNNCell(
+            [
+                tf.contrib.rnn.GRUCell(gru_size)
+                for _ in range(number_of_layers)
+                ], state_is_tuple=False)
+
+        with tf.variable_scope("RNN"):
+          outputs, state = tf.nn.dynamic_rnn(stacked_GRU, reshaped_input,
+                                             dtype=tf.float32)
+
+        reshaped_input = tf.reshape(outputs, [-1, gru_size])
+
+        cluster_weights = tf.get_variable("cluster_weights",
+              [gru_size, self.cluster_size],
+              initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(gru_size)))
+       
+        tf.summary.histogram("cluster_weights", cluster_weights)
+        activation = tf.matmul(reshaped_input, cluster_weights)
+        
+        if self.add_batch_norm:
+          activation = slim.batch_norm(
+              activation,
+              center=True,
+              scale=True,
+              is_training=self.is_training,
+              scope="cluster_bn")
+        else:
+          cluster_biases = tf.get_variable("cluster_biases",
+            [cluster_size],
+            initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(gru_size)))
+          tf.summary.histogram("cluster_biases", cluster_biases)
+          activation += cluster_biases
+        
+        activation = tf.nn.softmax(activation)
+        tf.summary.histogram("cluster_output", activation)
+
+        activation = tf.reshape(activation, [-1, self.max_frames, self.cluster_size])
+
+        a_sum = tf.reduce_sum(activation,-2,keep_dims=True)
+
+        cluster_weights2 = tf.get_variable("cluster_weights2",
+            [1,gru_size, self.cluster_size],
+            initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(gru_size)))
+        
+        a = tf.multiply(a_sum,cluster_weights2)
+        
+        activation = tf.transpose(activation,perm=[0,2,1])
+        
+        reshaped_input = tf.reshape(reshaped_input,[-1,self.max_frames,gru_size])
+        vlad = tf.matmul(activation,reshaped_input)
+        vlad = tf.transpose(vlad,perm=[0,2,1])
+        vlad = tf.subtract(vlad,a)
+        
+
+        vlad = tf.nn.l2_normalize(vlad,1)
+
+        # vlad = tf.reshape(vlad,[-1,self.cluster_size*self.feature_size])
+        vlad = tf.transpose(vlad,perm=[0,2,1]) # [b, c, f]
         # vlad = tf.reduce_sum(vlad, 2)
         state = tf.nn.l2_normalize(state,1)
 
@@ -1400,6 +1696,8 @@ class NetVLADModelLF(models.BaseModel):
     sqrtvlad = FLAGS.sqrtvlad
     nonlocalvlad = FLAGS.nonlocalvlad
     bilinear = FLAGS.bilinear
+    nonlocalvlad_shared = FLAGS.nonlocalvlad_shared
+    nonlocalvlad_unique = FLAGS.nonlocalvlad_unique
 
     num_frames = tf.cast(tf.expand_dims(num_frames, 1), tf.float32)
     if random_frames:
@@ -1453,6 +1751,12 @@ class NetVLADModelLF(models.BaseModel):
     elif nonlocalvlad:
       video_NetVLAD = NetVLAD_NonLocal(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = NetVLAD_NonLocal(128,max_frames,cluster_size/2, add_batch_norm, is_training)
+    elif nonlocalvlad_shared:
+      video_NetVLAD = NetVLAD_NonLocal_modularize_shared(1024,max_frames,cluster_size, add_batch_norm, is_training)
+      audio_NetVLAD = NetVLAD_NonLocal_modularize_shared(128,max_frames,cluster_size/2, add_batch_norm, is_training)
+    elif nonlocalvlad_unique:
+      video_NetVLAD = NetVLAD_NonLocal_modularize_unique(1024,max_frames,cluster_size, add_batch_norm, is_training)
+      audio_NetVLAD = NetVLAD_NonLocal_modularize_unique(128,max_frames,cluster_size/2, add_batch_norm, is_training)
     else:
       video_NetVLAD = NetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = NetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
@@ -2442,3 +2746,185 @@ class CDCModel(models.BaseModel):
         vocab_size=vocab_size,
         is_training=is_training,
         **unused_params)
+
+
+class multiScale_NetVLADModelLF(models.BaseModel):
+  """Creates a NetVLAD based model.
+  Args:
+    model_input: A 'batch_size' x 'max_frames' x 'num_features' matrix of
+                 input features.
+    vocab_size: The number of classes in the dataset.
+    num_frames: A vector of length 'batch' which indicates the number of
+         frames for each video (before padding).
+  Returns:
+    A dictionary with a tensor containing the probability predictions of the
+    model in the 'predictions' key. The dimensions of the tensor are
+    'batch_size' x 'num_classes'.
+  """
+
+
+  def create_model(self,
+                   model_input,
+                   vocab_size,
+                   num_frames,
+                   iterations=None,
+                   add_batch_norm=None,
+                   sample_random_frames=None,
+                   cluster_size=None,
+                   hidden_size=None,
+                   is_training=True,
+                   **unused_params):
+    iterations = iterations or FLAGS.iterations
+    add_batch_norm = add_batch_norm or FLAGS.netvlad_add_batch_norm
+    random_frames = sample_random_frames or FLAGS.sample_random_frames
+    cluster_size = cluster_size or FLAGS.netvlad_cluster_size
+    hidden1_size = hidden_size or FLAGS.netvlad_hidden_size
+    relu = FLAGS.netvlad_relu
+    dimred = FLAGS.netvlad_dimred
+    gating = FLAGS.gating
+    remove_diag = FLAGS.gating_remove_diag
+    nonlocalvlad = FLAGS.nonlocalvlad
+    nonlocalvlad_shared = FLAGS.nonlocalvlad_shared
+    nonlocalvlad_unique = FLAGS.nonlocalvlad_unique
+
+
+    # if nonlocalvlad:
+    #   video_NetVLAD = NetVLAD_NonLocal(1024,max_frames,cluster_size, add_batch_norm, is_training)
+    #   audio_NetVLAD = NetVLAD_NonLocal(128,max_frames,cluster_size/2, add_batch_norm, is_training)
+    # elif nonlocalvlad_shared:
+    #   video_NetVLAD = NetVLAD_NonLocal_modularize_shared(1024,max_frames,cluster_size, add_batch_norm, is_training)
+    #   audio_NetVLAD = NetVLAD_NonLocal_modularize_shared(128,max_frames,cluster_size/2, add_batch_norm, is_training)
+    # elif nonlocalvlad_unique:
+    #   video_NetVLAD = NetVLAD_NonLocal_modularize_unique(1024,max_frames,cluster_size, add_batch_norm, is_training)
+    #   audio_NetVLAD = NetVLAD_NonLocal_modularize_unique(128,max_frames,cluster_size/2, add_batch_norm, is_training)
+    # else:
+    #   video_NetVLAD = NetVLAD_Flexable(1024,max_frames,cluster_size, add_batch_norm, is_training)
+    #   audio_NetVLAD = NetVLAD_Flexable(128,max_frames,cluster_size/2, add_batch_norm, is_training)
+    video_NetVLAD = NetVLAD_Flexable(1024,cluster_size, add_batch_norm, is_training)
+    audio_NetVLAD = NetVLAD_Flexable(128,cluster_size/2, add_batch_norm, is_training)
+
+    num_frames = tf.cast(tf.expand_dims(num_frames, 1), tf.float32)
+    feature_size = model_input.get_shape().as_list()[2]
+
+    iterations_list = [300, 150, 150, 70, 70, 70, 70]
+    input_list = []
+
+    for iter_i, iter_size in enumerate(iterations_list):
+      model_input_tmp = utils.SampleRandomSequence(model_input, num_frames,
+                                               iter_size)
+      max_frames = model_input_tmp.get_shape().as_list()[1]
+      reshaped_input = tf.reshape(model_input_tmp, [-1, feature_size])
+
+      with (tf.variable_scope(("input_bn"), reuse=True if iter_i > 0 else None)):
+        reshaped_input = slim.batch_norm(
+            reshaped_input,
+            center=True,
+            scale=True,
+            is_training=is_training)
+
+      with (tf.variable_scope(("video_VLAD"), reuse=True if iter_i > 0 else None)):
+        vlad_video = video_NetVLAD.forward(reshaped_input[:,0:1024],max_frames)
+      with (tf.variable_scope(("audio_VLAD"), reuse=True if iter_i > 0 else None)):
+        vlad_audio = audio_NetVLAD.forward(reshaped_input[:,1024:],max_frames) 
+
+      vlad_tmp = tf.concat([vlad_video, vlad_audio],1)
+      input_list.append(vlad_tmp)
+
+    vlad = tf.concat(input_list, 1)
+
+    vlad_dim = vlad.get_shape().as_list()[1] 
+    hidden1_weights = tf.get_variable("hidden1_weights",
+      [vlad_dim, hidden1_size],
+      initializer=tf.random_normal_initializer(stddev=1 / math.sqrt(cluster_size)))
+       
+    activation = tf.matmul(vlad, hidden1_weights)
+
+    if add_batch_norm and relu:
+      activation = slim.batch_norm(
+          activation,
+          center=True,
+          scale=True,
+          is_training=is_training,
+          scope="hidden1_bn")
+
+    else:
+      hidden1_biases = tf.get_variable("hidden1_biases",
+        [hidden1_size],
+        initializer = tf.random_normal_initializer(stddev=0.01))
+      tf.summary.histogram("hidden1_biases", hidden1_biases)
+      activation += hidden1_biases
+   
+    if relu:
+      activation = tf.nn.relu6(activation)
+   
+
+    if gating:
+        gating_weights = tf.get_variable("gating_weights_2",
+          [hidden1_size, hidden1_size],
+          initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(hidden1_size)))
+        
+        gates = tf.matmul(activation, gating_weights)
+ 
+        if remove_diag:
+            #removes diagonals coefficients
+            diagonals = tf.matrix_diag_part(gating_weights)
+            gates = gates - tf.multiply(diagonals,activation)
+
+       
+        if add_batch_norm:
+          gates = slim.batch_norm(
+              gates,
+              center=True,
+              scale=True,
+              is_training=is_training,
+              scope="gating_bn")
+        else:
+          gating_biases = tf.get_variable("gating_biases",
+            [cluster_size],
+            initializer = tf.random_normal(stddev=1 / math.sqrt(feature_size)))
+          gates += gating_biases
+
+        gates = tf.sigmoid(gates)
+
+        activation = tf.multiply(activation,gates)
+
+    aggregated_model = getattr(video_level_models,
+                               FLAGS.video_level_classifier_model)
+
+
+    return aggregated_model().create_model(
+        model_input=activation,
+        vocab_size=vocab_size,
+        is_training=is_training,
+        **unused_params)
+
+
+def nonLocal_block(vlad, feature_size, hidden_size, cluster_size):
+    nonlocal_theta = tf.get_variable("nonlocal_theta",
+          [feature_size, hidden_size],
+          initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(feature_size)))
+    nonlocal_phi = tf.get_variable("nonlocal_phi",
+          [feature_size, hidden_size],
+          initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(feature_size)))
+    nonlocal_g = tf.get_variable("nonlocal_g",
+          [feature_size, hidden_size],
+          initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(feature_size)))
+    nonlocal_out = tf.get_variable("nonlocal_out",
+          [hidden_size, feature_size],
+          initializer = tf.random_normal_initializer(stddev=1 / math.sqrt(hidden_size)))
+
+    vlad_theta = tf.matmul(vlad, nonlocal_theta)
+    vlad_phi = tf.matmul(vlad, nonlocal_phi)
+    vlad_g = tf.matmul(vlad, nonlocal_g)
+
+    vlad_theta = tf.reshape(vlad_theta, [-1, cluster_size, hidden_size])
+    vlad_phi = tf.reshape(vlad_phi, [-1, cluster_size, hidden_size])
+    vlad_g = tf.reshape(vlad_phi, [-1, cluster_size, hidden_size])
+
+    vlad_softmax = tf.nn.softmax(feature_size**-.5 * tf.matmul(vlad_theta, tf.transpose(vlad_phi,perm=[0,2,1])))
+    vlad_g = tf.matmul(vlad_softmax, vlad_g)
+    vlad_g = tf.reshape(vlad_g, [-1, hidden_size])
+
+    vlad_g = tf.matmul(vlad_g, nonlocal_out)
+    vlad = vlad + vlad_g
+    return vlad

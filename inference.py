@@ -74,6 +74,9 @@ if __name__ == '__main__':
       "How many examples to process per batch.")
   flags.DEFINE_integer("num_readers", 1,
                        "How many threads to use for reading input files.")
+  flags.DEFINE_integer("seed", 2018,
+                       "seed.")
+tf.set_random_seed(FLAGS.seed)
 
 def format_lines(video_ids, predictions, top_k):
   batch_size = len(video_ids)

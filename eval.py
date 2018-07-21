@@ -52,6 +52,10 @@ if __name__ == "__main__":
                        "How many threads to use for reading input files.")
   flags.DEFINE_boolean("run_once", False, "Whether to run eval only once.")
   flags.DEFINE_integer("top_k", 20, "How many predictions to output per video.")
+  flags.DEFINE_integer("seed", 2018,
+                       "seed.")
+tf.set_random_seed(FLAGS.seed)
+
 
 
 def find_class_by_name(name, modules):

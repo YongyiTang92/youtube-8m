@@ -103,6 +103,10 @@ if __name__ == "__main__":
       "log_device_placement", False,
       "Whether to write the device on which every op will run into the "
       "logs on startup.")
+  flags.DEFINE_integer("seed", 2018,
+                       "seed.")
+tf.set_random_seed(FLAGS.seed)
+
 
 
 def validate_class_name(flag_value, category, modules, expected_superclass):
@@ -361,7 +365,7 @@ class Trainer(object):
     self.train_dir = train_dir
     # gpu_options=tf.GPUOptions(per_process_gpu_memory_fraction=0.4)
     self.config = tf.ConfigProto(
-        allow_soft_placement=True, log_device_placement=log_device_placement, gpu_options=gpu_options)
+        allow_soft_placement=True, log_device_placement=log_device_placement)
     # self.config.gpu_options.allow_growth = True
     self.model = model
     self.reader = reader
