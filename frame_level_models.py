@@ -62,6 +62,9 @@ flags.DEFINE_bool("nonlocalvlad_shared", False,
                   "nonlocalvlad_shared")
 flags.DEFINE_bool("nonlocalvlad_unique", False,
                   "nonlocalvlad_unique")
+flags.DEFINE_bool("gruthenvlad", False,
+                  "gruthenvlad")
+
 
 flags.DEFINE_bool("beforeNorm", False,
                   "nonlocal before norm")
@@ -1698,6 +1701,7 @@ class NetVLADModelLF(models.BaseModel):
     bilinear = FLAGS.bilinear
     nonlocalvlad_shared = FLAGS.nonlocalvlad_shared
     nonlocalvlad_unique = FLAGS.nonlocalvlad_unique
+    gruthenvlad = FLAGS.gruthenvlad
 
     num_frames = tf.cast(tf.expand_dims(num_frames, 1), tf.float32)
     if random_frames:
@@ -1757,6 +1761,9 @@ class NetVLADModelLF(models.BaseModel):
     elif nonlocalvlad_unique:
       video_NetVLAD = NetVLAD_NonLocal_modularize_unique(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = NetVLAD_NonLocal_modularize_unique(128,max_frames,cluster_size/2, add_batch_norm, is_training)
+    elif gruthenvlad:
+      video_NetVLAD = GRUthenNetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
+      audio_NetVLAD = GRUthenNetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
     else:
       video_NetVLAD = NetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = NetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
