@@ -64,6 +64,10 @@ flags.DEFINE_bool("nonlocalvlad_unique", False,
                   "nonlocalvlad_unique")
 flags.DEFINE_bool("gruthenvlad", False,
                   "gruthenvlad")
+flags.DEFINE_bool("sevlad", False,
+                  "sevlad")
+flags.DEFINE_bool("seresvlad", False,
+                  "seresvlad")
 
 
 flags.DEFINE_bool("beforeNorm", False,
@@ -1857,6 +1861,8 @@ class NetVLADModelLF(models.BaseModel):
     nonlocalvlad_shared = FLAGS.nonlocalvlad_shared
     nonlocalvlad_unique = FLAGS.nonlocalvlad_unique
     gruthenvlad = FLAGS.gruthenvlad
+    sevlad = FLAGS.sevlad
+    seresvlad = FLAGS.seresvlad
 
     num_frames = tf.cast(tf.expand_dims(num_frames, 1), tf.float32)
     if random_frames:
@@ -1919,6 +1925,12 @@ class NetVLADModelLF(models.BaseModel):
     elif gruthenvlad:
       video_NetVLAD = GRUthenNetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = GRUthenNetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
+    elif sevlad:
+      video_NetVLAD = SE_NetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
+      audio_NetVLAD = SE_NetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
+    elif seresvlad:
+      video_NetVLAD = SE_res_NetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
+      audio_NetVLAD = SE_res_NetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
     else:
       video_NetVLAD = NetVLAD(1024,max_frames,cluster_size, add_batch_norm, is_training)
       audio_NetVLAD = NetVLAD(128,max_frames,cluster_size/2, add_batch_norm, is_training)
